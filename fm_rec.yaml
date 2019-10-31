@@ -1,0 +1,67 @@
+appName: sqkbCF
+simFilePath: /user/algorithm/cf/tmp/merged_sim_item_corr
+simFileType: pair
+days: -30
+joinKey: itemId
+userAct_sql: "select deviceId, itemId, trigger_type, time, clickCount
+    from
+    (
+        select t2.*,row_number() over(partition by deviceId, itemId
+        order by trigger_type desc, time desc) num
+        from
+        (
+            SELECT deviceId, itemId,
+            (case when event_name='coupon_click' then 1
+            when event_name='buy_detail' then 2
+            when event_name='collect_detail' then 3
+            when event_name='footprint' then 4
+            else 0 end) trigger_type,
+            cast(event_time/1000 AS int) AS time,
+            count(*) over(partition by deviceId, itemId) AS clickCount
+            FROM 
+            (
+                SELECT device_id AS deviceId, obj_item_id AS itemId, event_name, event_time
+                    FROM hds.sqkb_newapplog_coupon
+                    WHERE ymd>='{STARTDATE}'
+                    and event_type='click'
+                    AND event_name in ('coupon_click','buy_detail','collect_detail')
+                    AND device_id<>''
+                    AND device_id<>'0'
+                    AND obj_item_id IS NOT NULL
+                union all
+                select a.device_id AS deviceId, a.itemid AS itemId, 'footprint' as event_name, a.time as event_time 
+                    from
+                    (select device_id,itemid,time from hds.spider_user_coupon_action where type = 'footprint' and ymd>='{STARTDATE}') a join
+                    (select item_id from hds.coupon_product_v2 where status != 0) b 
+                    on a.itemid=b.item_id
+            )t1
+        )t2
+    )t3 where num=1
+    "
+validCoupon_sql: " 
+    select item_id as itemId from
+    (select coupon_id,item_id,shop_id,status,product_type,subcate_id, cate_id3,cate_id4, is_recommend,
+    if (zk_price>0,zk_price,raw_price) zk_price,order_count,ticket_id,title from hds.coupon_product_v2) a
+    join
+    (select coupon_id, is_del as coupon_is_del from hds.coupon_product_profile) b
+    on a.coupon_id=b.coupon_id
+    join
+    (select shop_id, is_del as shop_is_del, shop_score_avg from hds.coupon_shop) c
+    on a.shop_id=c.shop_id
+    join
+    (select ticket_id, status as ticket_status from hds.coupon_ticket where status!=0) d
+    on a.ticket_id=d.ticket_id
+    where zk_price>=5 and zk_price<=150 and (is_recommend!=2 or order_count>=150)
+    and cate_id3 not in (22432,22441,22445,21017)
+    and cate_id3!=20498 and product_type=1 and a.ticket_id!=0 and ticket_status!=0
+    and status!=0 and subcate_id!=20764 and coupon_is_del!=1 and shop_is_del!=1
+    and shop_score_avg>=4.5
+    and !(title rlike '情趣|粉刺|牡蛎|湿疹|玛咖|痔|淫羊藿|肛门|私处|活体|阴茎|早泄|阳痿|阳具|人初油|鸡巴|飞机杯|跳蛋|人初油|印度神油|色情|三级|自慰|口爆|伟哥|av|AV|勃起|贞操')
+    "
+toHDFS: true
+midPath: /user/algorithm/cf/tmp/click_rec_mid_spark_valid
+resultPath: /user/algorithm/cf/tmp/click_rec_spark_valid_v2
+saveCount: 300
+owner: qiyu
+minLimit: 10
+maxLimit: 60
